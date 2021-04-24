@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2017-2019 The LineageOS project
+ * Copyright (C) 2017-2020 The LineageOS project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,6 +59,8 @@ public class NetworkTraffic extends TextView {
 
     private static final int MESSAGE_TYPE_PERIODIC_REFRESH = 0;
     private static final int MESSAGE_TYPE_UPDATE_VIEW = 1;
+    private static final int MESSAGE_TYPE_ADD_NETWORK = 2;
+    private static final int MESSAGE_TYPE_REMOVE_NETWORK = 3;
 
     private static final int UNITS_KILOBITS = 0;
     private static final int UNITS_MEGABITS = 1;
@@ -86,13 +88,15 @@ public class NetworkTraffic extends TextView {
     private SettingsObserver mObserver;
     private Drawable mDrawable;
 
-    private boolean mScreenOn = true;
-    private IDreamManager mDreamManager;
 
-    private int mRefreshInterval = 2;
+    // Network tracking related variables
+    private final ConnectivityManager mConnectivityManager;
+    private final HashMap<Network, LinkProperties> mLinkPropertiesMap = new HashMap<>();
+    // Used to indicate that the set of sources contributing
+    // to current stats have changed.
+    private boolean mNetworksChanged = true;
 
-    protected boolean mAttached;
-    private boolean mHideArrows;
+    private INetworkManagementService mNetworkManagementService;
 
     public NetworkTraffic(Context context) {
         this(context, null);
@@ -148,22 +152,85 @@ public class NetworkTraffic extends TextView {
         @Override
         public void handleMessage(Message msg) {
 
-            if (msg.what == MESSAGE_TYPE_PERIODIC_REFRESH) {
-                final long now = SystemClock.elapsedRealtime();
-                final long timeDelta = now - mLastUpdateTime; /* ms */
-                if (timeDelta >= mRefreshInterval * 1000 * 0.95f) {
-                    // Update counters
-                    long txBytes = TrafficStats.getTotalTxBytes() - mLastTxBytes;
-                    long rxBytes = TrafficStats.getTotalRxBytes() - mLastRxBytes;
-                    mTxKbps = (long) (txBytes * 8f / (timeDelta / 1000f) / 1000f);
-                    mRxKbps = (long) (rxBytes * 8f / (timeDelta / 1000f) / 1000f);
-                    mLastTxBytes += txBytes;
-                    mLastRxBytes += rxBytes;
-                    mLastUpdateTime = now;
+            switch (msg.what) {
+                case MESSAGE_TYPE_PERIODIC_REFRESH:
+                    recalculateStats();
+                    displayStatsAndReschedule();
+                    break;
+
+                case MESSAGE_TYPE_UPDATE_VIEW:
+                    displayStatsAndReschedule();
+                    break;
+
+                case MESSAGE_TYPE_ADD_NETWORK:
+                    final LinkPropertiesHolder lph = (LinkPropertiesHolder) msg.obj;
+                    mLinkPropertiesMap.put(lph.getNetwork(), lph.getLinkProperties());
+                    mNetworksChanged = true;
+                    break;
+
+                case MESSAGE_TYPE_REMOVE_NETWORK:
+                    mLinkPropertiesMap.remove((Network) msg.obj);
+                    mNetworksChanged = true;
+                    break;
+            }
+        }
+
+        private void recalculateStats() {
+            final long now = SystemClock.elapsedRealtime();
+            final long timeDelta = now - mLastUpdateTime; /* ms */
+            if (timeDelta < REFRESH_INTERVAL * 0.95f) {
+                return;
+            }
+            // Sum tx and rx bytes from all sources of interest
+            long txBytes = 0;
+            long rxBytes = 0;
+            // Add interface stats
+            for (LinkProperties linkProperties : mLinkPropertiesMap.values()) {
+                final String iface = linkProperties.getInterfaceName();
+                if (iface == null) {
+                    continue;
                 }
+                final long ifaceTxBytes = TrafficStats.getTxBytes(iface);
+                final long ifaceRxBytes = TrafficStats.getRxBytes(iface);
+                if (DEBUG) {
+                    Log.d(TAG, "adding stats from interface " + iface
+                            + " txbytes " + ifaceTxBytes + " rxbytes " + ifaceRxBytes);
+                }
+                txBytes += ifaceTxBytes;
+                rxBytes += ifaceRxBytes;
             }
 
-            final boolean enabled = mLocation != 0;
+            // Add tether hw offload counters since these are
+            // not included in netd interface stats.
+            final TetheringStats tetheringStats = getOffloadTetheringStats();
+            txBytes += tetheringStats.txBytes;
+            rxBytes += tetheringStats.rxBytes;
+
+            if (DEBUG) {
+                Log.d(TAG, "mNetworksChanged = " + mNetworksChanged);
+                Log.d(TAG, "tether hw offload txBytes: " + tetheringStats.txBytes
+                        + " rxBytes: " + tetheringStats.rxBytes);
+            }
+
+            final long txBytesDelta = txBytes - mLastTxBytes;
+            final long rxBytesDelta = rxBytes - mLastRxBytes;
+
+            if (!mNetworksChanged && timeDelta > 0 && txBytesDelta >= 0 && rxBytesDelta >= 0) {
+                mTxKbps = (long) (txBytesDelta * 8f / 1000f / (timeDelta / 1000f));
+                mRxKbps = (long) (rxBytesDelta * 8f / 1000f / (timeDelta / 1000f));
+            } else if (mNetworksChanged) {
+                mTxKbps = 0;
+                mRxKbps = 0;
+                mNetworksChanged = false;
+            }
+            mLastTxBytes = txBytes;
+            mLastRxBytes = rxBytes;
+            mLastUpdateTime = now;
+        }
+
+        private void displayStatsAndReschedule() {
+            final boolean enabled = mMode != MODE_DISABLED && isConnectionAvailable();
+
             final boolean showUpstream =
                     mMode == MODE_UPSTREAM_ONLY || mMode == MODE_UPSTREAM_AND_DOWNSTREAM;
             final boolean showDownstream =
@@ -389,5 +456,47 @@ public class NetworkTraffic extends TextView {
         }
         setCompoundDrawablesWithIntrinsicBounds(null, null, mDrawable, null);
         setTextColor(mIconTint);
+    }
+
+
+    private ConnectivityManager.NetworkCallback mNetworkCallback =
+            new ConnectivityManager.NetworkCallback() {
+        @Override
+        public void onLinkPropertiesChanged(Network network, LinkProperties linkProperties) {
+            Message msg = new Message();
+            msg.what = MESSAGE_TYPE_ADD_NETWORK;
+            msg.obj = new LinkPropertiesHolder(network, linkProperties);
+            mTrafficHandler.sendMessage(msg);
+        }
+
+        @Override
+        public void onLost(Network network) {
+            Message msg = new Message();
+            msg.what = MESSAGE_TYPE_REMOVE_NETWORK;
+            msg.obj = network;
+            mTrafficHandler.sendMessage(msg);
+        }
+    };
+
+    private class LinkPropertiesHolder {
+        private Network mNetwork;
+        private LinkProperties mLinkProperties;
+
+        public LinkPropertiesHolder(Network network, LinkProperties linkProperties) {
+            mNetwork = network;
+            mLinkProperties = linkProperties;
+        }
+
+        public LinkPropertiesHolder(Network network) {
+            mNetwork = network;
+        }
+
+        public Network getNetwork() {
+            return mNetwork;
+        }
+
+        public LinkProperties getLinkProperties() {
+            return mLinkProperties;
+        }
     }
 }

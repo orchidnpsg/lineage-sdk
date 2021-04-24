@@ -1035,6 +1035,15 @@ public final class LineageSettings {
                 sBooleanValidator;
 
         /**
+         * boolean value. toggles swipe up hint in gestural nav mode
+         */
+        public static final String NAVIGATION_BAR_HINT = "navigation_bar_hint";
+
+        /** @hide */
+        public static final Validator NAVIGATION_BAR_HINT_VALIDATOR =
+                sBooleanValidator;
+
+        /**
          * Action to perform when the home key is long-pressed.
          * (Default can be configured via config_longPressOnHomeBehavior)
          * 0 - Nothing
@@ -2096,6 +2105,16 @@ public final class LineageSettings {
                 sBooleanValidator;
 
         /**
+         * Whether to take partial screenshot with volume down + power click.
+         * 0 = 0ff, 1 = on
+         */
+        public static final String CLICK_PARTIAL_SCREENSHOT = "click_partial_screenshot";
+
+        /** @hide */
+        public static final Validator CLICK_PARTIAL_SCREENSHOT_VALIDATOR =
+                sBooleanValidator;
+
+        /**
          * I can haz more bukkits
          * @hide
          */
@@ -2241,6 +2260,7 @@ public final class LineageSettings {
             VALIDATORS.put(NAV_BUTTONS, NAV_BUTTONS_VALIDATOR);
             VALIDATORS.put(NAVIGATION_BAR_MENU_ARROW_KEYS,
                     NAVIGATION_BAR_MENU_ARROW_KEYS_VALIDATOR);
+            VALIDATORS.put(NAVIGATION_BAR_HINT, NAVIGATION_BAR_HINT_VALIDATOR);
             VALIDATORS.put(KEY_HOME_LONG_PRESS_ACTION, KEY_HOME_LONG_PRESS_ACTION_VALIDATOR);
             VALIDATORS.put(KEY_HOME_DOUBLE_TAP_ACTION, KEY_HOME_DOUBLE_TAP_ACTION_VALIDATOR);
             VALIDATORS.put(BACK_WAKE_SCREEN, BACK_WAKE_SCREEN_VALIDATOR);
@@ -2371,6 +2391,8 @@ public final class LineageSettings {
                     LONG_SCREEN_APPS_VALIDATOR);
             VALIDATORS.put(FORCE_SHOW_NAVBAR,
                     FORCE_SHOW_NAVBAR_VALIDATOR);
+            VALIDATORS.put(CLICK_PARTIAL_SCREENSHOT,
+                    CLICK_PARTIAL_SCREENSHOT_VALIDATOR);
             VALIDATORS.put(__MAGICAL_TEST_PASSING_ENABLER,
                     __MAGICAL_TEST_PASSING_ENABLER_VALIDATOR);
         };
@@ -2951,6 +2973,19 @@ public final class LineageSettings {
          */
         public static final String KILL_APP_LONGPRESS_BACK = "kill_app_longpress_back";
 
+        /**
+         * Whether to exclude the top area of the screen from back gesture
+         * @hide
+         */
+        public static final String GESTURE_BACK_EXCLUDE_TOP = "gesture_back_exclude_top";
+
+        /**
+         * Top to half of the screen height are the valid values
+         * @gide
+         */
+        public static final Validator GESTURE_BACK_EXCLUDE_TOP_VALIDATOR =
+                new InclusiveIntegerRangeValidator(0, 50);
+
         /** Protected Components
          * @hide
          */
@@ -3302,6 +3337,7 @@ public final class LineageSettings {
         public static final Map<String, Validator> VALIDATORS =
                 new ArrayMap<String, Validator>();
         static {
+            VALIDATORS.put(GESTURE_BACK_EXCLUDE_TOP, GESTURE_BACK_EXCLUDE_TOP_VALIDATOR);
             VALIDATORS.put(PROTECTED_COMPONENTS, PROTECTED_COMPONENTS_VALIDATOR);
             VALIDATORS.put(PROTECTED_COMPONENT_MANAGERS, PROTECTED_COMPONENTS_MANAGER_VALIDATOR);
             VALIDATORS.put(NETWORK_TRAFFIC_MODE, NETWORK_TRAFFIC_MODE_VALIDATOR);
